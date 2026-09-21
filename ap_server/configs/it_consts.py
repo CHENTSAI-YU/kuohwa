@@ -1,0 +1,9 @@
+
+FLASK_PORT = 5000
+
+MYSQL_HOST = "localhost"
+MYSQL_PORT = 3306
+MYSQL_DATABASE = "project"
+MYSQL_USER = "root"
+MYSQL_PASSWD = "jessica4020"
+MYSQL_CHARSET = "utf8mb4"
