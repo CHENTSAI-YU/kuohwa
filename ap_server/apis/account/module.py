@@ -1,6 +1,9 @@
 from utils.mysql_utils import MysqlAccess
 import os
 from werkzeug.utils import secure_filename
+from utils.mail_utils import MailUtils
+import secrets
+import string
 
 class Account(object):
     @staticmethod
@@ -19,7 +22,7 @@ class Account(object):
         #檢查使用者帳號是否在資料庫
 
         #SQL 查詢語法
-        sql = """SELECT USER_ID FROM TBL_USER_ACCOUNT WHERE USER_ID = %s"""
+        sql = """SELECT USER_ID, EMAIL FROM TBL_USER_ACCOUNT WHERE USER_ID = %s"""
 
         # 執行 SQL 查詢：
         # 1. 傳入 sql 語法
@@ -27,14 +30,49 @@ class Account(object):
         # 3. result 接收資料庫回傳的查詢結果 List
         #MysqlAccess: 封裝 DB 連線與操作的工具類別
         result = MysqlAccess.query(sql, (user_id,))
+        if not result:
+            return {"result": 1, 
+                    "message": "查無此帳號"
+                    }
 
-        #帳號存在，回傳成功狀態
-        
+        # 2. 取得使用者的 Email (若資料庫的 EMAIL 欄位為空，則預設使用 user_id)
+        to_email = result[0].get("EMAIL")
+        #防呆
+        if not to_email:
+            return {
+                "result": 1,
+                "message": "此帳號尚未設定信箱，請聯絡管理員"
+            }
+        # 3. 產生 8 位數隨機英數字密碼
+        alphabet = string.ascii_letters + string.digits
+        new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
+
+        # 4. 呼叫 MailUtils 發送重設密碼信件
+        mail_sent = MailUtils.send_forget_password_mail(
+            to_email=to_email, 
+            new_password=new_password
+        )
+
+        # 5. 判斷寄信結果
+        if not mail_sent:
+            return {
+                "result": 1,
+                "message": "郵件發送失敗，請確認信箱設定或稍後再試"
+            }
+        #Step 6. 寄信成功才更新密碼：寫回資料庫並回傳成功
+        # secrets.choice(alphabet)：從傳入的序列（這裡的 alphabet 代表所有大寫字母、小寫字母與數字）中，隨機抽取「一個」字元。
+        # for _ in range(8)：生一個從 0 到 7 的數列，代表這個動作要重複執行 8 次。
+        # 整合效果：(secrets.choice(alphabet) for _ in range(8)) 會連續進行 8 次隨機抽字，產生出包含 8 個單一字元的清單/產生器
+        # ''.join(...)：將傳入的字元串列，用指定的連接符號黏合成一個完整的字串。
+        # 單引號 ''：代表「中間不加任何分隔符號（空字串）」。寫 ''.join(['a', 'B', '3']) 結果為 "aB3"
+        # upadte_sql="""UPDATE TBL_USER_ACCOUNT SET PASSWORD = %s WHERE USER_ID = %s"""
+        update_sql = """UPDATE TBL_USER_ACCOUNT SET PASSWORD = %s WHERE USER_ID = %s"""
+        MysqlAccess.execute(update_sql, (new_password, user_id))
+
         return {
            "result": 0,
            "message": ""
         }
-
     #2
     @staticmethod
     def get_account_list():  # 沒有傳參數進來

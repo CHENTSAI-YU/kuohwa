@@ -1,4 +1,4 @@
-smtp_server = "smtp.gmail.com"
-smtp_port = 587  
-sender_email = "caiyuc6@gmail.com"  
-sender_password = "mydi bbou jdsi npwe"
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587  
+SENDER_EMAIL = "caiyuc6@gmail.com" 
+SENDER_PASSWORD = "mydi bbou jdsi npwe"
