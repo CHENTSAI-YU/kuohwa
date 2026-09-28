@@ -34,6 +34,7 @@ class Forget(CustomResource):
     @api.expect(forget_input_payload) 
 
     # @api.marshal_with: 定義並過濾 API 成功時的回應 JSON 結構 (過濾輸出)
+    #marshal_with 的作用是：不管你的函式實際回傳什麼，最後輸出一律照這個模型的欄位格式化
     @api.marshal_with(output_payload) 
 
     def post(self):

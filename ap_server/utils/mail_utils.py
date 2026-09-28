@@ -10,7 +10,7 @@ class MailUtils:
     def send_forget_password_mail(to_email, new_password):
         #接收 to_email 與 new_password 並寄出信件
         try:
-            subject = "【敏捷訂單系統】重設密碼通知"
+            subject = "重設密碼通知"
             content = f"您的新臨時密碼為：{new_password}\n請登入後儘速變更密碼。"
             
             msg = MIMEText(content, "plain", "utf-8")

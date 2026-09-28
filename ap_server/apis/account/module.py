@@ -4,18 +4,28 @@ from werkzeug.utils import secure_filename
 from utils.mail_utils import MailUtils
 import secrets
 import string
+#datetime 是 Python 內建處理日期時間的模組，from datetime import datetime 是從裡面把 datetime 這個 class 匯入進來，才能直接用 datetime.now() 抓「現在的時間」。
+from datetime import datetime
+
 
 class Account(object):
     @staticmethod
     def login(username, passwd):
-        # TODO
-        raw = MysqlAccess.query("select * from test")
+        sql = """SELECT USER_ID, PASSWORD, ROLE FROM TBL_USER_ACCOUNT WHERE USER_ID = %s"""
+        result = MysqlAccess.query(sql, (username,))
+
+        if not result:
+            return {"result": 1, "message": "帳號或密碼錯誤"}
+
+        stored_password = result[0].get("PASSWORD")
+        if passwd != stored_password:
+            return {"result": 1, "message": "帳號或密碼錯誤"}
+
         return {
             "result": 0,
-            "message": "",
-            "data": "登入成功",
-            "test": list(raw[0].values())[0]
+            "message": ""
         }
+
     #1
     @staticmethod
     def forget(user_id):
@@ -125,18 +135,31 @@ class Account(object):
     #3 add
     @staticmethod
     def add_account_list(user_id, role, email):
+        #先檢查是否有一樣的user_id
+        check_sql = """SELECT USER_ID FROM TBL_USER_ACCOUNT WHERE USER_ID=%s"""
+        check_result = MysqlAccess.query(check_sql, (user_id,))
+
+        if check_result:
+            return {
+            "result": 1,
+            "message": "帳號已存在"
+        }
+
         # 1. 將 role 清單轉為逗號分隔的字串 (例如 ["admin", "super_user"] -> "admin,super_user")
         if isinstance(role, list):
             role_str = ",".join(role)
         else:
             role_str = str(role) if role else ""
 
-        #宿入資料指令
-        sql="""INSERT INTO TBL_USER_ACCOUNT (USER_ID, ROLE, EMAIL) VALUES (%s, %s, %s)"""
+        #取得目前時間字串
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        #寫入資料指令
+        sql="""INSERT INTO TBL_USER_ACCOUNT (USER_ID, ROLE, EMAIL, UPDATE_TIME) VALUES (%s, %s, %s, %s)"""
 
         try:
             #執行sql寫入指令
-            MysqlAccess.execute(sql, (user_id, role_str, email))
+            MysqlAccess.execute(sql, (user_id, role_str, email, now))
 
             return {
                 "result": 0,
@@ -188,12 +211,26 @@ class Account(object):
         new_role_list=data.get("new_role", []) #回傳預設的空陣列 []
         new_email=data.get("new_email")
 
+        #取輸入的資料後檢查帳號是否存在
+        if new_user_id != old_user_id:
+            user_check_sql = """SELECT USER_ID FROM TBL_USER_ACCOUNT WHERE USER_ID=%s"""
+            user_check_result = MysqlAccess.query(user_check_sql, (new_user_id,))
+            if user_check_result:
+                return {
+                    "result": 1,
+                    "message": "帳號已存在"
+                }
+
         # 1. 將角色陣列轉為逗號分隔字串 (例如: ['Admin', 'Super User'] -> 'Admin,Super User')
         role_str = ",".join(new_role_list)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         # 2. 組裝 UPDATE SQL 語法
-        sql = """UPDATE TBL_USER_ACCOUNT SET USER_ID = %s, ROLE = %s, EMAIL = %s WHERE USER_ID = %s"""
+        sql = """UPDATE TBL_USER_ACCOUNT SET USER_ID = %s, ROLE = %s, EMAIL = %s, UPDATE_TIME = %s WHERE USER_ID = %s"""
+
         # 3. 執行 SQL 更新動作
-        MysqlAccess.execute(sql, (new_user_id, role_str, new_email, old_user_id))
+        MysqlAccess.execute(sql, (new_user_id, role_str, new_email, now, old_user_id))
 
         return {
             "result": 0,
@@ -203,6 +240,10 @@ class Account(object):
     #6
     @staticmethod
     def autosave_detect_table(uuid, data):
+         # 先刪除這個 uuid 底下的舊資料，再寫入新資料，避免重複疊加
+        delete_sql = """DELETE FROM USER_DETECT_TABLE WHERE UUID = %s"""
+        MysqlAccess.execute(delete_sql, (uuid,))
+        
         #拆解 data 字典，取得頁碼 (page_number) 與該頁對應的表格資料 (table)
         for page_number, table in data.items(): #.items() 會同時將字典的 Key 與 Value 打包成一對對的組合，沒用會只拿到字典的 Key（鍵），拿不到內部的 Value（值）
             #拆解 table 字典，取得表格識別碼 (table_id) 與表格詳細資訊 (table_info)
@@ -352,6 +393,10 @@ class Account(object):
             fieldvalue=item.get("fieldvalue")
             vendor=item.get("vendor")
             file_type=item.get("file_type")
+
+            # 先刪除同一組 vendor+file_type+field 的舊資料，避免重複疊加
+            delete_sql = """DELETE FROM USER_MAPPING_TABLE WHERE VENDOR=%s AND FILETYPE=%s AND FIELD=%s"""
+            MysqlAccess.execute(delete_sql, (vendor, file_type, field))
 
             sql="""INSERT INTO USER_MAPPING_TABLE (VENDOR, FILETYPE, FIELD, FIELDVALUE) VALUES (%s, %s, %s, %s)"""
             # fieldvalue：["Bo", "Borad"]
