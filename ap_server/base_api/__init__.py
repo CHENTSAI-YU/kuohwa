@@ -5,9 +5,8 @@ from flask import Blueprint, Flask, request, session
 from utils.mysql_utils import MysqlAccess
 
 from .custom_cls import Api
-#from apis.account.api import api as account_ns
 from apis.account import auth, orders  # 匯入以觸發 route 註冊
-from apis.account.model import api as account_ns
+from apis.account.model import api as account_ns, order_api
 
 api_blueprint = Blueprint('api', __name__, url_prefix='/api')
 api = Api(api_blueprint, version="0.0.1", description='', title='Kuohwa API Service', doc="/doc")
@@ -29,6 +28,8 @@ app.register_blueprint(api_blueprint)
 
 # register swagger api
 api.add_namespace(account_ns)
+api.add_namespace(order_api)
+
 
 # # namespace
 # account_api = api.namespace("account", description=u"帳號及權限管理")

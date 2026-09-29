@@ -1,4 +1,4 @@
-from utils.mysql_utils import MysqlAccess
+from utils.mysql_utils import MysqlAccess #專案自己包裝好的資料庫存取工具類別
 import os
 from werkzeug.utils import secure_filename
 from utils.mail_utils import MailUtils
@@ -21,61 +21,74 @@ class Account(object):
         if passwd != stored_password:
             return {"result": 1, "message": "帳號或密碼錯誤"}
 
+        # 登入成功，更新這個帳號的上次登入時間
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_sql = """UPDATE TBL_USER_ACCOUNT SET UPDATE_TIME = %s WHERE USER_ID = %s"""
+        MysqlAccess.execute(update_sql, (now, username))
+
+
+        # 把資料庫存的角色字串，切成 list（跟 get_account_list 一樣的處理方式）
+        role_raw = result[0].get("ROLE") or ""
+        role_list = role_raw.split(",") if role_raw else []
+
         return {
             "result": 0,
-            "message": ""
-        }
+            "message": "",
+            "role": role_list   # 多回傳這個角色 list，讓 auth.py 可以拿到
+    }
+        
 
     #1
     @staticmethod
     def forget(user_id):
         #檢查使用者帳號是否在資料庫
-
         #SQL 查詢語法
         sql = """SELECT USER_ID, EMAIL FROM TBL_USER_ACCOUNT WHERE USER_ID = %s"""
 
         # 執行 SQL 查詢：
         # 1. 傳入 sql 語法
         # 2. 參數以 Tuple (user_id,) 傳入 換掉佔位符 (單一元素的 Tuple 必須加上逗號，否則 Python 會視為一般括號字串導致傳參失敗)
-        # 3. result 接收資料庫回傳的查詢結果 List
+        # 3. result 接收資料庫回傳的查詢結果 List，每一筆是一個字典
         #MysqlAccess: 封裝 DB 連線與操作的工具類別
         result = MysqlAccess.query(sql, (user_id,))
+        #result 是空的 list 回傳 result:1
         if not result:
             return {"result": 1, 
                     "message": "查無此帳號"
                     }
 
-        # 2. 取得使用者的 Email (若資料庫的 EMAIL 欄位為空，則預設使用 user_id)
+        # 從查詢結果取出這個帳號的 Email
         to_email = result[0].get("EMAIL")
-        #防呆
+        #如果這個帳號沒有設定信箱（EMAIL 是空的或 NULL），不繼續往下執行
         if not to_email:
             return {
                 "result": 1,
                 "message": "此帳號尚未設定信箱，請聯絡管理員"
             }
-        # 3. 產生 8 位數隨機英數字密碼
+        # 產生 8 位數隨機英數字密碼
+        ## alphabet：把所有大小寫英文字母跟數字組成一個字元池，讓隨機抽字時有得選
         alphabet = string.ascii_letters + string.digits
+        #從 alphabet 隨機抽 8 次字元，組成新密碼
+        #secrets.choice(alphabet)：從傳入的序列（這裡的 alphabet 代表所有大寫字母、小寫字母與數字）中，隨機抽取「一個」字元。
+        #for _ in range(8)：生一個從 0 到 7 的數列，代表這個動作要重複執行 8 次。
+        #''.join(...)：將傳入的字元串列，用指定的連接符號黏合成一個完整的字串。
         new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
 
-        # 4. 呼叫 MailUtils 發送重設密碼信件
+        # 呼叫 MailUtils 發送重設密碼信件，把新密碼（明碼）寄給使用者
         mail_sent = MailUtils.send_forget_password_mail(
             to_email=to_email, 
             new_password=new_password
         )
 
-        # 5. 判斷寄信結果
+        # 判斷寄信結果
+        #如果寄信失敗，不要更新密碼，維持原密碼有效，讓使用者可以再試一次
         if not mail_sent:
             return {
                 "result": 1,
                 "message": "郵件發送失敗，請確認信箱設定或稍後再試"
             }
-        #Step 6. 寄信成功才更新密碼：寫回資料庫並回傳成功
-        # secrets.choice(alphabet)：從傳入的序列（這裡的 alphabet 代表所有大寫字母、小寫字母與數字）中，隨機抽取「一個」字元。
-        # for _ in range(8)：生一個從 0 到 7 的數列，代表這個動作要重複執行 8 次。
-        # 整合效果：(secrets.choice(alphabet) for _ in range(8)) 會連續進行 8 次隨機抽字，產生出包含 8 個單一字元的清單/產生器
-        # ''.join(...)：將傳入的字元串列，用指定的連接符號黏合成一個完整的字串。
-        # 單引號 ''：代表「中間不加任何分隔符號（空字串）」。寫 ''.join(['a', 'B', '3']) 結果為 "aB3"
-        # upadte_sql="""UPDATE TBL_USER_ACCOUNT SET PASSWORD = %s WHERE USER_ID = %s"""
+        #確定信有寄出去了，才把新密碼寫回資料庫
+        #先寄信成功才更新密碼
         update_sql = """UPDATE TBL_USER_ACCOUNT SET PASSWORD = %s WHERE USER_ID = %s"""
         MysqlAccess.execute(update_sql, (new_password, user_id))
 
@@ -89,7 +102,7 @@ class Account(object):
         #查詢指令存到sql
         sql = """ SELECT USER_ID, ROLE, EMAIL, UPDATE_TIME FROM TBL_USER_ACCOUNT """
 
-        # 執行查詢指令 result接收回傳結果(字典)
+        # 執行查詢指令 result接收回傳結果，result 是一個 List，每一筆是一個字典
         result = MysqlAccess.query(sql)
         #建立空串列 放取出的資料
         result_data = []
@@ -97,7 +110,7 @@ class Account(object):
         #result的每一筆值存到row直到迴圈結束(取到result的最後一筆值)
         for row in result:
             # 1. 處理 user_id (用字典 Key 取值) 如果資料不存在回傳空字串(防呆)
-            #row.get("USER_ID") 取字典的值(user_id對應的值)
+            #row.get("USER_ID") 取字典的值
             user_id = row.get("USER_ID") if row.get("USER_ID") is not None else ""
 
             # 2. 處理 role_raw (用字典 Key 取值)
@@ -106,16 +119,17 @@ class Account(object):
             email = row.get("EMAIL") if row.get("EMAIL") is not None else ""
 
             # 4. 處理 update_time (用字典 Key 取值)
+            #取出的值轉字串
             update_time = str(row.get("UPDATE_TIME")) if row.get("UPDATE_TIME") is not None else ""
 
             # 5. 處理 role 切割成 List
-            # 語法拆解：
-            # 1. if role_raw: 檢查角色字串是否有值 (非空字串與非 None)
-            # 2. .split(","): 用逗號作為分隔符，將字串切成串列 (例如 "admin,super_user" -> ["admin", "super_user"])
-            # 3. else []: 若 role_raw 為空，則賦予空串列 [] 防呆，避免程式崩潰
+            # if role_raw: 檢查角色字串是否有值 
+            # .split(","): 用逗號作為分隔符，將字串切成串列 (例如 "admin,super_user" -> ["admin", "super_user"])
+            # else []: 若 role_raw 為空，則賦予空串列 [] 
             role_list = role_raw.split(",") if role_raw else []
 
             #取出來的值加到新串列
+            #把一筆整理好的帳號資料，組成字典新增至result_data
             result_data.append({
                 "user_id": user_id,
                 "role": role_list,
@@ -145,34 +159,33 @@ class Account(object):
             "message": "帳號已存在"
         }
 
-        # 1. 將 role 清單轉為逗號分隔的字串 (例如 ["admin", "super_user"] -> "admin,super_user")
-        if isinstance(role, list):
+        #判斷傳入的role是否為串列
+        #將 role 轉為逗號分隔的字串 (例如 ["admin", "super_user"] -> "admin,super_user")
+        if type(role) == list:
             role_str = ",".join(role)
         else:
             role_str = str(role) if role else ""
 
-        #取得目前時間字串
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         #寫入資料指令
-        sql="""INSERT INTO TBL_USER_ACCOUNT (USER_ID, ROLE, EMAIL, UPDATE_TIME) VALUES (%s, %s, %s, %s)"""
+        sql="""INSERT INTO TBL_USER_ACCOUNT (USER_ID, ROLE, EMAIL) VALUES (%s, %s, %s)"""
 
         try:
             #執行sql寫入指令
-            MysqlAccess.execute(sql, (user_id, role_str, email, now))
-
+            MysqlAccess.execute(sql, (user_id, role_str, email))
             return {
                 "result": 0,
                 "message": ""
             }
-        except Exception as e:
+        except Exception as e: #執行過程如果出錯，回傳失敗結果
             return{
-                "result":1,
-                "message":"新增帳號失敗"
+            "result":1,
+            "message":"新增帳號失敗"
             }
+
 
     #4
     @staticmethod
+    ## 定義刪除帳號的方法 
     def delete_account_list(user_id):
         #先檢查帳號是存在
         check_sql="""SELECT USER_ID FROM TBL_USER_ACCOUNT WHERE USER_ID=%s"""
@@ -186,7 +199,6 @@ class Account(object):
             }
         #刪除指定帳號
         sql = "DELETE FROM TBL_USER_ACCOUNT WHERE user_id = %s"
-
         MysqlAccess.execute(sql, (user_id,))
 
         return {
@@ -196,9 +208,11 @@ class Account(object):
 
     #5
     @staticmethod
+    #定義更新帳號的方法
     def update_account_list(old_user_id, data):
         #檢查舊帳號是否存在
         check_sql="""SELECT USER_ID FROM TBL_USER_ACCOUNT WHERE USER_ID=%s"""
+        #
         check_result=MysqlAccess.query(check_sql, (old_user_id,))
         if not check_result:
             return{
@@ -208,11 +222,11 @@ class Account(object):
 
         #取data裡面的資料
         new_user_id=data.get("new_user_id")
-        new_role_list=data.get("new_role", []) #回傳預設的空陣列 []
+        new_role_list=data.get("new_role") 
         new_email=data.get("new_email")
 
         #取輸入的資料後檢查帳號是否存在
-        if new_user_id != old_user_id:
+        if new_user_id != old_user_id: #如果新舊帳號不一樣，要先檢查是否有跟新帳號一樣的名稱，才不會有重複的名稱
             user_check_sql = """SELECT USER_ID FROM TBL_USER_ACCOUNT WHERE USER_ID=%s"""
             user_check_result = MysqlAccess.query(user_check_sql, (new_user_id,))
             if user_check_result:
@@ -224,13 +238,13 @@ class Account(object):
         # 1. 將角色陣列轉為逗號分隔字串 (例如: ['Admin', 'Super User'] -> 'Admin,Super User')
         role_str = ",".join(new_role_list)
 
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # 2. 組裝 UPDATE SQL 語法
-        sql = """UPDATE TBL_USER_ACCOUNT SET USER_ID = %s, ROLE = %s, EMAIL = %s, UPDATE_TIME = %s WHERE USER_ID = %s"""
+        # 2.UPDATE語法
+        #用 old_user_id 找到要改的那一筆
+        sql = """UPDATE TBL_USER_ACCOUNT SET USER_ID = %s, ROLE = %s, EMAIL = %s WHERE USER_ID = %s"""
 
         # 3. 執行 SQL 更新動作
-        MysqlAccess.execute(sql, (new_user_id, role_str, new_email, now, old_user_id))
+        #依序代入 4 個 %s 佔位符：新帳號 ID、角色字串、新信箱、要更新的舊帳號 ID（WHERE 條件)
+        MysqlAccess.execute(sql, (new_user_id, role_str, new_email, old_user_id))
 
         return {
             "result": 0,
@@ -243,45 +257,56 @@ class Account(object):
          # 先刪除這個 uuid 底下的舊資料，再寫入新資料，避免重複疊加
         delete_sql = """DELETE FROM USER_DETECT_TABLE WHERE UUID = %s"""
         MysqlAccess.execute(delete_sql, (uuid,))
-        
+
+        rows=[] #空串列 放取出來的資料
+
+        #第一層 解頁碼
         #拆解 data 字典，取得頁碼 (page_number) 與該頁對應的表格資料 (table)
-        for page_number, table in data.items(): #.items() 會同時將字典的 Key 與 Value 打包成一對對的組合，沒用會只拿到字典的 Key（鍵），拿不到內部的 Value（值）
-            #拆解 table 字典，取得表格識別碼 (table_id) 與表格詳細資訊 (table_info)
-            for table_id, table_info in table.items():
+        for page_number, table in data.items(): #.items() 會同時將字典的 Key 與 Value 打包成一對對的組合
+            # data 結構是 {頁碼: {表格ID: 表格資訊}}，.items() 把每個頁碼跟它對應的表格資料一起拿出來
+            #page_number=頁碼 table={表格ID: 表格資訊}
+
+            ##第二層(table={表格ID: 表格資訊(upper_left,upper_right, cells)}) 取table裡面的表格資料
+            for table_id, table_info in table.items(): 
                 upper_left=table_info.get("upper_left")
                 upper_right=table_info.get("upper_right")
                 lower_right=table_info.get("lower_right")
                 lower_left=table_info.get("lower_left")
 
-                #從 table_info 中取出儲存格清單 (cells)，若不存在則預設回傳空陣列 []
+                #第三層 cells
+                #從 table_info 中取出cells，若不存在則預設回傳空陣列 []
                 cells = table_info.get("cells", [])
 
-                #逐一取出該表格內部的每一個單元格資訊 (cell)
+                #逐一取出cells裡面的值 並和上面取出的值一起存入 rows
                 for cell in cells: 
-                    sql="""INSERT INTO USER_DETECT_TABLE 
-                        (UUID, UPPER_LEFT, UPPER_RIGHT, LOWER_RIGHT, LOWER_LEFT, 
-                        NAME, CELLS_UPPER_LEFT, CELLS_UPPER_RIGHT, CELLS_LOWER_RIGHT, CELLS_LOWER_LEFT, START_ROW, END_ROW, START_COL, END_COL, CONTENT) 
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                    rows.append((
+                    uuid, upper_left, upper_right, lower_right, lower_left,
+                    cell.get("name"),
+                    cell.get("upper_left"),
+                    cell.get("upper_right"),
+                    cell.get("lower_right"),
+                    cell.get("lower_left"),
+                    cell.get("start_row"),
+                    cell.get("end_row"),
+                    cell.get("start_col"),
+                    cell.get("end_col"),
+                    cell.get("content")
+                ))
+                    
+        # 全部 cells 一次寫入
+        if rows:
+            sql = """INSERT INTO USER_DETECT_TABLE
+                (UUID, UPPER_LEFT, UPPER_RIGHT, LOWER_RIGHT, LOWER_LEFT,
+                NAME, CELLS_UPPER_LEFT, CELLS_UPPER_RIGHT, CELLS_LOWER_RIGHT, CELLS_LOWER_LEFT, START_ROW, END_ROW, START_COL, END_COL, CONTENT)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+            result=MysqlAccess.insert_many(sql, rows)
 
-                    #執行 SQL 語法並帶入對應的參數值#
-                    result= MysqlAccess.execute(sql, (uuid, upper_left, upper_right, lower_right, lower_left,  #上面已取出
-                                                      cell.get("name"), 
-                                                      cell.get("upper_left"),
-                                                      cell.get("upper_right"), 
-                                                      cell.get("lower_right"), 
-                                                      cell.get("lower_left"),
-                                                      cell.get("start_row"),
-                                                      cell.get("end_row"),
-                                                      cell.get("start_col"),
-                                                      cell.get("end_col"),
-                                                      cell.get("content")
-                                                )) 
-                    # 每次執行寫入後，立刻檢查結果；若失敗則即時中斷並回傳
-                    if not result:
-                                return{
-                                    "result":1, 
-                                    "message":"資料儲存失敗"
-                                    }
+            # 每次執行寫入後，檢查結果
+            if not result:
+                return{
+                    "result":1, 
+                    "message":"資料儲存失敗"
+                }
 
         return {
             "result": 0, 
@@ -291,12 +316,13 @@ class Account(object):
     #7
     @staticmethod 
     def get_detect_table(uuid):
-        #根據傳入的 uuid 查詢 USER_DETECT_TABLE 表格的資料
+        #根據傳入的 uuid 查詢表格的資料
         sql="""SELECT UPPER_LEFT, UPPER_RIGHT, LOWER_RIGHT, LOWER_LEFT, 
         NAME, CELLS_UPPER_LEFT, CELLS_UPPER_RIGHT, CELLS_LOWER_RIGHT, CELLS_LOWER_LEFT, START_ROW, END_ROW, START_COL, END_COL, CONTENT
         FROM USER_DETECT_TABLE WHERE UUID=%s"""
 
-        # 執行 SQL 查詢，取得該 uuid 的所有平鋪紀錄 (傳回 List of Dicts)
+        # 執行 SQL 查詢，取得所有紀錄(不是巢狀的) (傳回 List of Dicts)
+        #沒有頁碼底下包表格、表格底下包 cells
         rows=MysqlAccess.query(sql, (uuid, ))
 
         #若資料庫內查無此 uuid 的資料，直接回傳錯誤訊息與空字典
@@ -308,11 +334,11 @@ class Account(object):
             }
 
         # 3. 初始化動態 JSON 字典
-        data={}
+        data={} #用來存「頁碼 -> 表格 -> 儲存格」這種階層結構
 
         #4. 走訪每一筆 DB 紀錄，動態建立「頁碼 -> 表格 -> 儲存格」階層
         for row in rows:
-            # 動態抓取 DB 頁碼與表格 ID；若欄位不存在，則以預設變數值替代 (確保 key 不會寫死)
+            # 動態抓取 DB 頁碼與表格 ID；若欄位不存在，則以預設變數值替代
             page_num = str(row.get("PAGE_NUMBER", "0"))
             table_id = str(row.get("TABLE_ID", "table_0"))
 
@@ -398,15 +424,20 @@ class Account(object):
             delete_sql = """DELETE FROM USER_MAPPING_TABLE WHERE VENDOR=%s AND FILETYPE=%s AND FIELD=%s"""
             MysqlAccess.execute(delete_sql, (vendor, file_type, field))
 
-            sql="""INSERT INTO USER_MAPPING_TABLE (VENDOR, FILETYPE, FIELD, FIELDVALUE) VALUES (%s, %s, %s, %s)"""
-            # fieldvalue：["Bo", "Borad"]
+            # 把這個 field 底下所有 fieldvalue 組成 rows，一次寫入
+            rows = []
             for value in fieldvalue:
-                MysqlAccess.execute(sql, (vendor, file_type, field, value))
+                rows.append((vendor, file_type, field, value))
+
+            if rows:
+                sql="""INSERT INTO USER_MAPPING_TABLE (VENDOR, FILETYPE, FIELD, FIELDVALUE) VALUES (%s, %s, %s, %s)"""
+                MysqlAccess.insert_many(sql, rows)
 
         return{
             "result":0, 
             "message":""
         }
+    
     #10
     @staticmethod
     def get_image_path(uuid):
